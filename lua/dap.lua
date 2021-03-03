@@ -756,18 +756,13 @@ function Session:set_breakpoints(bufexpr, on_done)
     self:request('setBreakpoints', payload, function(err1, resp)
         if err1 then
           print("Error setting breakpoints: " .. err1.message)
-        elseif resp then
+        else
           for _, bp in pairs(resp.breakpoints) do
             if not bp.verified then
               log.info('Server rejected breakpoint', bp)
               remove_breakpoint_signs(bufnr, bp.line)
             end
           end
-        else
-          log.warn(
-            'setBreakpoints response contains neither an error nor a body. ' ..
-            'This is likely a bug in the debug adapter.'
-          )
         end
         num_bufs = num_bufs - 1
         if num_bufs == 0 and on_done then
@@ -850,6 +845,7 @@ function Session:handle_body(body)
     self.message_callbacks[decoded.request_seq] = nil
     self.message_requests[decoded.request_seq] = nil
     if decoded.success then
+      assert(decoded.body, 'There must be a body in a successful response')
       vim.schedule(function()
         callback(nil, decoded.body)
         for _, c in pairs(M.custom_response_handlers[decoded.command]) do
@@ -1012,13 +1008,13 @@ function Session:request(command, arguments, callback)
   local _ = log.debug() and log.debug('request', payload)
   local current_seq = self.seq
   self.seq = self.seq + 1
+  if callback then
+    self.message_callbacks[current_seq] = callback
+    self.message_requests[current_seq] = arguments
+  end
   vim.schedule(function()
     local msg = msg_with_content_length(vim.fn.json_encode(payload))
     self.client.write(msg)
-    if callback then
-      self.message_callbacks[current_seq] = callback
-      self.message_requests[current_seq] = arguments
-    end
   end)
 end
 
