@@ -175,9 +175,46 @@ local function run_adapter(adapter, configuration, opts)
   elseif adapter.type == 'server' then
     lazy.progress.report('Running: ' .. name)
     M.attach(adapter.host, adapter.port, configuration, opts)
+  elseif adapter.type == 'executable_server' then -- 👈これを追加した
+    lazy.progress.report('Running: ' .. name)
+    -- local session = M.launch(adapter, configuration, opts)
+    local stdin, stdout, stderr = executable_server(adapter, opts)
+    -- `Error executing luv callback: vimL function must not be called in a lua loop callback`
+    vim.loop.read_start(stdout, vim.schedule_wrap(function(err, data)
+      -- codelldb の出力から port を得る
+      -- Lisening on port xxxxx
+      local port = string.match(data , "Listening on port (%d+)" )
+      M.attach(nil, port, configuration, opts)
+    end))
   else
     print(string.format('Invalid adapter type %s, expected `executable` or `server`', adapter.type))
   end
+end
+
+function executable_server(adapter, opts)
+  local uv = vim.loop
+  local stdin = uv.new_pipe(false)
+  local stdout = uv.new_pipe(false)
+  local stderr = uv.new_pipe(false)
+  local handle
+  local function onexit()
+    stdin:close()
+    stdout:close()
+    stderr:close()
+    handle:close()
+  end
+  local options = adapter.options or {}
+  local pid_or_err
+  handle, pid_or_err = uv.spawn(adapter.command, {
+    args = adapter.args;
+    stdio = {stdin, stdout, stderr};
+    cwd = options.cwd;
+    env = options.env;
+    detached = true;
+  }, onexit)
+  assert(handle, 'Error running ' .. adapter.command .. ': ' .. pid_or_err)
+
+  return stdin, stdout, stderr
 end
 
 
@@ -619,8 +656,8 @@ function M.attach(host, port, config, opts)
     print('config needs the `request` property which must be one of `attach` or `launch`')
     return
   end
-  session = require('dap.session'):connect(host, port, opts)
-  session:initialize(config)
+  -- initialize が早すぎるので config を connect 引数に
+  session = require('dap.session'):connect(host, port, opts, config)
   return session
 end
 
