@@ -125,6 +125,26 @@ M.adapters = {}
 -- }
 --
 M.configurations = {}
+local Path = require('plenary.path')
+local function is_workspaceFolder(path)
+  if path:joinpath(".git"):exists() then
+    return true
+  end
+end
+function M.get_workspaceFolder()
+  local cwd = Path:new(vim.fn.getcwd())
+  local current = cwd
+  while true do
+    if is_workspaceFolder(current) then
+      return current
+    end
+    local parent = Path:new(current:parent())
+    if not parent then
+      return cwd
+    end
+    current = parent
+  end
+end
 
 
 vim.fn.sign_define('DapBreakpoint', {text='B', texthl='', linehl='', numhl=''})
@@ -151,7 +171,7 @@ local function expand_config_variables(option)
     fileExtname = vim.fn.expand("%:e");
     relativeFile = vim.fn.expand("%");
     relativeFileDirname = vim.fn.fnamemodify(vim.fn.expand("%:h"), ":r");
-    workspaceFolder = vim.fn.getcwd();
+    workspaceFolder = M.get_workspaceFolder().filename;
     workspaceFolderBasename = vim.fn.fnamemodify(vim.fn.getcwd(), ":t");
   }
   local ret = option
@@ -160,7 +180,6 @@ local function expand_config_variables(option)
   end
   return ret
 end
-
 
 local function run_adapter(adapter, configuration, opts)
   local name = configuration.name or '[no name]'
@@ -180,11 +199,15 @@ local function run_adapter(adapter, configuration, opts)
     -- local session = M.launch(adapter, configuration, opts)
     local stdin, stdout, stderr = executable_server(adapter, opts)
     -- `Error executing luv callback: vimL function must not be called in a lua loop callback`
+    local attached = false
     vim.loop.read_start(stdout, vim.schedule_wrap(function(err, data)
       -- codelldb の出力から port を得る
       -- Lisening on port xxxxx
-      local port = string.match(data , "Listening on port (%d+)" )
-      M.attach(nil, port, configuration, opts)
+      if not attached then
+        attached=true
+        local port = string.match(data , "Listening on port (%d+)" )
+        M.attach(nil, port, configuration, opts)
+      end
     end))
   else
     print(string.format('Invalid adapter type %s, expected `executable` or `server`', adapter.type))
